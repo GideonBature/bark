@@ -481,8 +481,8 @@ async fn double_spend_oor() {
 	let vtxo = bark_client.vtxos().unwrap().into_iter().next().unwrap().vtxo;
 	let vtxo_keypair = bark_client.pubkey_keypair(&vtxo.user_pubkey()).unwrap().unwrap().1;
 
-	let pk1 = bark_client.derive_store_next_keypair().unwrap().0.public_key();
-	let pk2 = bark_client.derive_store_next_keypair().unwrap().0.public_key();
+	let pk1 = bark_client.derive_next_keypair().unwrap().0.public_key();
+	let pk2 = bark_client.derive_next_keypair().unwrap().0.public_key();
 
 	let builder1 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(100_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk1).unwrap();
 	let builder2 = CheckpointedPackageBuilder::new([vtxo.clone()], VtxoRequest { amount: sat(200_000), policy: VtxoPolicy::new_pubkey(*RANDOM_PK)}, pk1).unwrap();

@@ -420,7 +420,7 @@ impl Wallet {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let (change_keypair, _) = self.derive_store_next_keypair()?;
+		let (change_keypair, _) = self.derive_next_keypair()?;
 
 		let inputs = self.select_vtxos_to_cover(amount, None)
 			.context("Could not find enough suitable VTXOs to cover lightning payment")?;

@@ -130,7 +130,7 @@ impl Wallet {
 		}).collect::<anyhow::Result<(Vec<_>, Vec<_>, Vec<_>)>>()?;
 
 		// Claiming arkoor against preimage
-		let (claim_keypair, _) = self.derive_store_next_keypair()?;
+		let (claim_keypair, _) = self.derive_next_keypair()?;
 		let receive_policy = VtxoPolicy::new_pubkey(claim_keypair.public_key());
 
 		let pay_req = VtxoRequest {
@@ -306,7 +306,7 @@ impl Wallet {
 
 		let htlc_recv_expiry = current_height + receive.htlc_recv_cltv_delta as BlockHeight;
 
-		let (next_keypair, _) = self.derive_store_next_keypair()?;
+		let (next_keypair, _) = self.derive_next_keypair()?;
 		let req = protos::PrepareLightningReceiveClaimRequest {
 			payment_hash: receive.payment_hash.to_vec(),
 			user_pubkey: next_keypair.public_key().serialize().to_vec(),

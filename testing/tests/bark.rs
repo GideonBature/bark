@@ -16,6 +16,7 @@ use ark::{ProtocolEncoding, Vtxo, VtxoPolicy, VtxoRequest};
 use ark::rounds::RoundEvent;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::BarkNetwork;
+use bark::persist::BarkPersister;
 use bark::persist::StoredRoundState;
 use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
@@ -354,11 +355,41 @@ async fn send_full_arkoor() {
 	bark1.board(sat(80_000)).await;
 	ctx.generate_blocks(BOARD_CONFIRMATIONS).await;
 
+	// Regression check: if we spend the full amount, arkoor should create no change output
+	// and therefore should not persist/advance a new change key.
+	let db_path = bark1.datadir().join("db.sqlite");
+	let db = bark::SqliteClient::open(&db_path).expect("open bark db");
+	let before = db.get_last_vtxo_key_index().expect("read last vtxo key index");
+
 	let addr2 = bark2.address().await;
 	bark1.send_oor(addr2, sat(80_000)).await;
 
+	let db = bark::SqliteClient::open(&db_path).expect("open bark db");
+	let after = db.get_last_vtxo_key_index().expect("read last vtxo key index");
+	assert_eq!(
+		before,
+		after,
+		"wallet key index advanced even though no change was created",
+	);
+
 	assert_eq!(0, bark1.spendable_balance().await.to_sat());
 	assert_eq!(80_000, bark2.spendable_balance().await.to_sat());
+
+	// Now verify that when we DO create a change output, the change keypair IS stored.
+	// bark2 already has 80,000 sats from the arkoor above, so we can use that directly.
+	let db_path = bark2.datadir().join("db.sqlite");
+	let db = bark::SqliteClient::open(&db_path).expect("open bark db");
+	let before = db.get_last_vtxo_key_index().expect("read last vtxo key index");
+
+	let addr1 = bark1.address().await;
+	bark2.send_oor(addr1, sat(20_000)).await;
+
+	let db = bark::SqliteClient::open(&db_path).expect("open bark db");
+	let after = db.get_last_vtxo_key_index().expect("read last vtxo key index");
+	assert!(
+		after > before,
+		"wallet key index should advance when change output is created",
+	);
 }
 
 #[tokio::test]
@@ -1210,7 +1241,7 @@ async fn stepwise_round() {
 		inputs: vec![inputs[0].vtxo.clone()],
 		outputs: vec![VtxoRequest {
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy {
-				user_pubkey: bark.derive_store_next_keypair().unwrap().0.public_key(),
+				user_pubkey: bark.derive_next_keypair().unwrap().0.public_key(),
 			}),
 			amount: inputs[0].vtxo.amount(),
 		}],

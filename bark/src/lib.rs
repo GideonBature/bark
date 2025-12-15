@@ -658,14 +658,21 @@ impl Wallet {
 		self.chain.require_version()
 	}
 
-	/// Derive and store the keypair directly after currently last revealed one,
-	/// together with its index.
-	pub fn derive_store_next_keypair(&self) -> anyhow::Result<(Keypair, u32)> {
+	/// Peek at the keypair directly after currently last revealed one,
+	/// together with its index, without storing it.
+	pub fn peek_next_keypair(&self) -> anyhow::Result<(Keypair, u32)> {
 		let last_revealed = self.db.get_last_vtxo_key_index()?;
 
 		let index = last_revealed.map(|i| i + 1).unwrap_or(u32::MIN);
 		let keypair = self.seed.derive_vtxo_keypair(index);
 
+		Ok((keypair, index))
+	}
+
+	/// Derive and store the keypair directly after currently last revealed one,
+	/// together with its index.
+	pub fn derive_next_keypair(&self) -> anyhow::Result<(Keypair, u32)> {
+		let (keypair, index) = self.peek_next_keypair()?;
 		self.db.store_vtxo_key(index, keypair.public_key())?;
 		Ok((keypair, index))
 	}
@@ -735,7 +742,7 @@ impl Wallet {
 	pub async fn new_address(&self) -> anyhow::Result<ark::Address> {
 		let srv = &self.require_server()?;
 		let network = self.properties()?.network;
-		let pubkey = self.derive_store_next_keypair()?.0.public_key();
+		let pubkey = self.derive_next_keypair()?.0.public_key();
 
 		Ok(ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
@@ -765,7 +772,7 @@ impl Wallet {
 	pub async fn new_address_with_index(&self) -> anyhow::Result<(ark::Address, u32)> {
 		let srv = &self.require_server()?;
 		let network = self.properties()?.network;
-		let (keypair, index) = self.derive_store_next_keypair()?;
+		let (keypair, index) = self.derive_next_keypair()?;
 		let pubkey = keypair.public_key();
 		let addr = ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
@@ -1356,7 +1363,7 @@ impl Wallet {
 		onchain: &mut dyn onchain::Board,
 		amount: Amount,
 	) -> anyhow::Result<PendingBoard> {
-		let (user_keypair, _) = self.derive_store_next_keypair()?;
+		let (user_keypair, _) = self.derive_next_keypair()?;
 		self.board(onchain, Some(amount), user_keypair).await
 	}
 
@@ -1365,7 +1372,7 @@ impl Wallet {
 		&self,
 		onchain: &mut dyn onchain::Board,
 	) -> anyhow::Result<PendingBoard> {
-		let (user_keypair, _) = self.derive_store_next_keypair()?;
+		let (user_keypair, _) = self.derive_next_keypair()?;
 		self.board(onchain, None, user_keypair).await
 	}
 
@@ -1602,7 +1609,7 @@ impl Wallet {
 		let total_amount = should_refresh_vtxos.iter().map(|v| v.amount()).sum::<Amount>();
 
 		if total_amount > P2TR_DUST {
-			let (user_keypair, _) = self.derive_store_next_keypair()?;
+			let (user_keypair, _) = self.derive_next_keypair()?;
 			let req = VtxoRequest {
 				policy: VtxoPolicy::new_pubkey(user_keypair.public_key()),
 				amount: total_amount,
@@ -1675,7 +1682,7 @@ impl Wallet {
 
 		info!("Refreshing {} VTXOs (total amount = {}).", vtxos.len(), total_amount);
 
-		let (user_keypair, _) = self.derive_store_next_keypair()?;
+		let (user_keypair, _) = self.derive_next_keypair()?;
 		let req = VtxoRequest {
 			policy: VtxoPolicy::Pubkey(PubkeyVtxoPolicy { user_pubkey: user_keypair.public_key() }),
 			amount: total_amount,

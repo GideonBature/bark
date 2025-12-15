@@ -1,7 +1,6 @@
 use anyhow::Context;
 use bitcoin::Amount;
 use bitcoin::hex::DisplayHex;
-use bitcoin::secp256k1::PublicKey;
 use log::{info, error};
 
 use ark::{VtxoRequest, ProtocolEncoding};
@@ -63,16 +62,21 @@ impl Wallet {
 	}
 
 	async fn create_checkpointed_arkoor(
-		&self, vtxo_request: VtxoRequest, change_pubkey: PublicKey
+		&self, vtxo_request: VtxoRequest
 	) -> anyhow::Result<ArkoorCreateResult> {
-		if vtxo_request.policy.user_pubkey() == change_pubkey {
-			bail!("Cannot create arkoor to same address as change");
-		}
-
 		// Find vtxos to cover
 		let mut srv = self.require_server()?;
 		let inputs: Vec<Vtxo> = self.select_vtxos_to_cover(vtxo_request.amount, None)?;
 		let input_ids: Vec<VtxoId> = inputs.iter().map(|v| v.id()).collect();
+
+		// Peek at a potential change keypair without storing it yet.
+		// We'll only store it if change is actually created.
+		let (change_keypair, change_key_index) = self.peek_next_keypair()?;
+		let change_pubkey = change_keypair.public_key();
+
+		if vtxo_request.policy.user_pubkey() == change_pubkey {
+			bail!("Cannot create arkoor to same address as change");
+		}
 
 		let user_keypairs = inputs.iter()
 			.map(|vtxo| self.get_vtxo_key(&vtxo))
@@ -98,23 +102,29 @@ impl Wallet {
 			.context("Failed to cosign vtxos")?
 			.build_signed_vtxos();
 
-		// See if their is a change vtxo
+		// By construction, if present, the change VTXO is always the last output
 		if vtxos.last().expect("At least one vtxo").user_pubkey() == change_pubkey {
+			// Change was created, so now store the keypair
+			self.db.store_vtxo_key(change_key_index, change_pubkey)?;
+
 			let nb_vtxos = vtxos.len();
 			let change = vtxos.last().cloned();
-			Ok(ArkoorCreateResult {
+			return Ok(ArkoorCreateResult {
 				input: input_ids,
 				// The last one is change
-				created: vtxos.into_iter().take(nb_vtxos.saturating_sub(1)).collect::<Vec<_>>(),
-				change: change,
-			})
-		} else {
-			Ok(ArkoorCreateResult {
-				input: input_ids,
-				created: vtxos,
-				change: None,
-			})
+				created: vtxos
+					.into_iter()
+					.take(nb_vtxos.saturating_sub(1))
+					.collect::<Vec<_>>(),
+				change,
+			});
 		}
+
+		Ok(ArkoorCreateResult {
+			input: input_ids,
+			created: vtxos,
+			change: None,
+		})
 	}
 
 	/// Makes an out-of-round payment to the given [ark::Address]. This does not require waiting for
@@ -141,11 +151,8 @@ impl Wallet {
 			bail!("Sent amount must be at least {}", P2TR_DUST);
 		}
 
-		let change_pubkey = self.derive_store_next_keypair()
-			.context("Failed to create change keypair")?.0;
-
 		let request = VtxoRequest { amount, policy: destination.policy().clone() };
-		let arkoor = self.create_checkpointed_arkoor(request.clone(), change_pubkey.public_key())
+		let arkoor = self.create_checkpointed_arkoor(request.clone())
 			.await
 			.context("Failed to create checkpointed transactions")?;
 

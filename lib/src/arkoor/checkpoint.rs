@@ -90,6 +90,8 @@ pub enum ArkoorConstructionError {
 	},
 	#[error("An output is below the dust threshold")]
 	Dust,
+	#[error("Change output required but no change pubkey was provided")]
+	MissingChangePubkey,
 	#[error("Too many inputs provided")]
 	TooManyInputs,
 }

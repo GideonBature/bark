@@ -290,7 +290,7 @@ mod test {
 		let package_builder = CheckpointedPackageBuilder::new(
 			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(100_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			Some(alice_public_key())
 		).expect("Valid package");
 
 		let funding_map = HashMap::from([(funding_tx.compute_txid(), funding_tx)]);
@@ -306,7 +306,7 @@ mod test {
 		let package_builder = CheckpointedPackageBuilder::new(
 			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(900), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			Some(alice_public_key())
 		).expect("Valid package");
 
 		// We should generate one vtxo for an amount of 1000 sat to bob
@@ -332,7 +332,7 @@ mod test {
 		let package = CheckpointedPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(17_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			Some(alice_public_key())
 		).expect("Valid package");
 
 		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
@@ -363,7 +363,7 @@ mod test {
 		let package = CheckpointedPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(16_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			Some(alice_public_key())
 		).expect("Valid package");
 
 		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
@@ -397,7 +397,7 @@ mod test {
 		let package = CheckpointedPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2],
 			VtxoRequest { amount: Amount::from_sat(5_700), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			Some(alice_public_key())
 		).expect("Valid package");
 
 		let vtxos: Vec<Vtxo> = package.build_unsigned_vtxos().collect();
@@ -424,7 +424,7 @@ mod test {
 		let result = CheckpointedPackageBuilder::new(
 			[alice_vtxo],
 			VtxoRequest { amount: Amount::from_sat(1000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			Some(alice_public_key())
 		);
 
 		match result {
@@ -449,7 +449,7 @@ mod test {
 		let package = CheckpointedPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3],
 			VtxoRequest { amount: Amount::from_sat(20_000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			Some(alice_public_key())
 		);
 
 		match package {
@@ -474,7 +474,7 @@ mod test {
 				amount: Amount::from_sat(100),
 				policy: VtxoPolicy::new_pubkey(bob_public_key())
 			},
-			alice_public_key()
+			Some(alice_public_key())
 		);
 
 		match result {
@@ -499,7 +499,7 @@ mod test {
 		let package = CheckpointedPackageBuilder::new(
 			[alice_vtxo_1, alice_vtxo_2, alice_vtxo_3, alice_vtxo_4],
 			VtxoRequest { amount: Amount::from_sat(2000), policy: VtxoPolicy::new_pubkey(bob_public_key()) },
-			alice_public_key()
+			Some(alice_public_key())
 		);
 
 		match package {
