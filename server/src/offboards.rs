@@ -244,7 +244,7 @@ impl Server {
 		let vtxos = self.db.get_vtxos_by_id(input_vtxos).await?;
 		let forfeit_ctx = OffboardForfeitContext::new(&vtxos, &state.offboard_tx.unsigned_tx);
 
-		let forfeit_txs = forfeit_ctx.check_finalize_transactions(
+		let _forfeit_txs = forfeit_ctx.check_finalize_transactions(
 			self.server_key.leak_ref(),
 			&state.connector_key,
 			&state.forfeit_pub_nonces,
