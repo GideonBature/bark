@@ -5,6 +5,7 @@ use std::sync::atomic::{self, AtomicBool};
 use std::time::Duration;
 
 use bitcoin::{Amount, Weight};
+use bitcoin::secp256k1::{Secp256k1, SecretKey};
 use bitcoin_ext::P2TR_DUST_SAT;
 use bitcoincore_rpc::RpcApi;
 use futures::future::join_all;
@@ -17,6 +18,7 @@ use ark::offboard::OffboardRequest;
 use ark::rounds::RoundEvent;
 use ark::vtxo::policy::PubkeyVtxoPolicy;
 use bark::BarkNetwork;
+use bark::onchain::silent_payment::{SilentPaymentAddress, SpNetwork};
 use bark::persist::StoredRoundState;
 use bark::round::RoundParticipation;
 use bark::subsystem::RoundMovement;
@@ -1130,6 +1132,42 @@ async fn onchain_drain() {
 
 	let recipient_balance = recipient.onchain_balance().await;
 	assert_eq!(recipient_balance, sat(999_443));
+}
+
+#[tokio::test]
+async fn onchain_send_silent() {
+	let ctx = TestContext::new("bark/onchain_send_silent").await;
+	let srv = ctx.new_captaind_with_funds("server", None, btc(1)).await;
+	let sender = ctx.new_bark_with_funds("bark_sender", &srv, sat(1_000_000)).await;
+
+	let secp = Secp256k1::new();
+
+	let scan_key_bytes = [0x01u8; 32];
+	let spend_key_bytes = [0x02u8; 32];
+
+	let scan_seckey = SecretKey::from_slice(&scan_key_bytes).expect("valid key");
+	let spend_seckey = SecretKey::from_slice(&spend_key_bytes).expect("valid key");
+
+	let scan_pubkey = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &scan_seckey);
+	let spend_pubkey = bitcoin::secp256k1::PublicKey::from_secret_key(&secp, &spend_seckey);
+
+	let sp_scan_pubkey = silentpayments::secp256k1::PublicKey::from_slice(&scan_pubkey.serialize()).expect("valid pubkey");
+	let sp_spend_pubkey = silentpayments::secp256k1::PublicKey::from_slice(&spend_pubkey.serialize()).expect("valid pubkey");
+
+	let sp_address = SilentPaymentAddress::new(
+		sp_scan_pubkey, sp_spend_pubkey, SpNetwork::Regtest, 0,
+	).expect("valid sp address");
+
+	let sp_address_str = sp_address.to_string();
+
+	assert!(sp_address_str.starts_with("sprt1"), "should be regtest SP address");
+
+	sender.onchain_send_silent(&sp_address_str, sat(100_000)).await;
+	ctx.generate_blocks(1).await;
+
+	let sender_balance = sender.onchain_balance().await;
+	assert!(sender_balance < sat(900_000), "sender balance should have decreased");
+	assert!(sender_balance > sat(899_000), "sender should still have most of their change");
 }
 
 #[tokio::test]

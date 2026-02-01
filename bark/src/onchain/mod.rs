@@ -26,6 +26,9 @@ mod bdk;
 #[cfg(feature = "onchain_bdk")]
 pub use bdk_wallet;
 
+#[cfg(feature = "silent-payments")]
+pub mod silent_payment;
+
 pub use bitcoin_ext::cpfp::{CpfpError, MakeCpfpFees};
 
 /// BDK-backed onchain wallet implementation.

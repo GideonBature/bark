@@ -271,6 +271,13 @@ impl Bark {
 		self.run(["onchain", "send", &destination, &amount, "--verbose"]).await;
 	}
 
+	/// Use onchain wallet to send to a silent payment address (BIP352)
+	pub async fn onchain_send_silent(&self, destination: impl fmt::Display, amount: Amount) {
+		let destination = destination.to_string();
+		let amount = amount.to_string();
+		self.run(["onchain", "send-silent", &destination, &amount, "--verbose"]).await;
+	}
+
 	pub async fn onchain_drain(&self, destination: impl fmt::Display) {
 		let destination = destination.to_string();
 		self.run(["onchain", "drain", &destination, "--verbose"]).await;

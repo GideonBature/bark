@@ -14,6 +14,7 @@ onchain_bdk = ["bdk_wallet", "bark-bitcoin-ext/bdk"]
 tls-native-roots = ["tonic/tls-native-roots"]
 tls-webpki-roots = ["tonic/tls-webpki-roots"]
 rand = ["bitcoin/rand", "bip39/rand"]
+silent-payments = ["silentpayments"]
 
 [lib]
 name = "bark"
@@ -63,6 +64,7 @@ parking_lot.workspace = true
 
 # Prebuilt BDK Wallet only
 bdk_wallet = { workspace = true, features = [ "rusqlite" ], optional = true }
+silentpayments = { workspace = true, optional = true }
 
 [dev-dependencies]
 ark-lib = { path = "../lib", features = [ "test-util" ] }

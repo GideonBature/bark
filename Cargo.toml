@@ -88,3 +88,5 @@ tracing-core = { version = "0.1.35" }
 tracing-opentelemetry = "0.31.0"
 tracing-subscriber = { version = "0.3.22", features = [ "std", "registry", "ansi", "fmt", "json", "env-filter" ] }
 tracing-attributes = "0.1.31"
+# silent payments
+silentpayments = "0.4.1"

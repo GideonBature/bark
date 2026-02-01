@@ -8,9 +8,16 @@ use log::{info, warn};
 
 use bark::Wallet;
 use bark::onchain::{ChainSync, OnchainWallet};
+use bark::onchain::silent_payment::SilentPaymentAddress;
 use bark_json::{cli as json, primitives};
 
 use bark_cli::util::output_json;
+
+/// Parse a silent payment address string for clap
+fn parse_silent_payment_address(s: &str) -> Result<SilentPaymentAddress, String> {
+	SilentPaymentAddress::try_from(s)
+		.map_err(|e| format!("invalid silent payment address: {:?}", e))
+}
 
 #[derive(clap::Subcommand)]
 pub enum OnchainCommand {
@@ -33,6 +40,26 @@ pub enum OnchainCommand {
 		/// Amount to send
 		///
 		/// Provided value must match format `<amount> <unit>`, where unit can be any
+		/// amount denomination. Example: `250000 sats`.
+		amount: Amount,
+		/// Skip syncing wallet
+		#[arg(long)]
+		no_sync: bool,
+	},
+
+	/// Send to a Silent Payment address (BIP352)
+	/// 
+	/// Silent payment addresses provide receiver privacy by deriving unique
+	/// addresses for each payment. Addresses start with sp1 (mainnet),
+	/// tsp1 (testnet/signet), or sprt1 (regtest).
+	#[command()]
+	SendSilent {
+		/// Silent Payment destination address
+		#[arg(value_parser = parse_silent_payment_address)]
+		destination: SilentPaymentAddress,
+		/// Amount to send
+		/// 
+		/// Privided value must match format `<amount> <unit>`, where unit can be any
 		/// amount denomination. Example: `250000 sats`.
 		amount: Amount,
 		/// Skip syncing wallet
@@ -122,6 +149,21 @@ pub async fn execute_onchain_command(onchain_command: OnchainCommand, wallet: &m
 
 			let fee_rate = wallet.chain.fee_rates().await.regular;
 			let txid = onchain.send(&wallet.chain, addr, amount, fee_rate).await?;
+
+			let output = json::onchain::Send { txid };
+			output_json(&output);
+		},
+		OnchainCommand::SendSilent { destination, amount, no_sync} => {
+			if !no_sync {
+				info!("Syncing wallet...");
+				if let Err(e) = onchain.sync(&wallet.chain).await {
+					warn!("Sync error: {}", e)
+				}
+			}
+
+			info!("Sending to silent payment address using BIP352 derivation");
+			let fee_rate = wallet.chain.fee_rates().await.regular;
+			let txid = onchain.send_to_silent_payment(&wallet.chain, destination, amount, fee_rate).await?;
 
 			let output = json::onchain::Send { txid };
 			output_json(&output);
