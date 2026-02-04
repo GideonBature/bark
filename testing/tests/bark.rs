@@ -920,6 +920,17 @@ async fn accept_mailbox() {
 	bark2.maintain().await;
 	let bark2_vtxos = bark2.vtxos().await;
 	assert_eq!(bark2_vtxos.len(), 1);
+
+	// Test import_vtxo
+	let bark2_wallet = bark2.client().await;
+	let vtxos = bark2_wallet.vtxos().await.unwrap();
+	let vtxo_hex = vtxos[0].vtxo.serialize_hex();
+
+	bark2.import_vtxo(&vtxo_hex).await;
+	assert_eq!(bark2.vtxos().await.len(), 1, "import should be idempotent");
+
+	let err = bark.try_import_vtxos(&vtxo_hex).await.unwrap_err();
+	assert!(err.to_string().contains("signable clause") || err.to_string().contains("not owned"), "expected ownership error, got: {}", err);
 }
 
 #[tokio::test]

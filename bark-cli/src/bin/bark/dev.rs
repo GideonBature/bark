@@ -73,7 +73,14 @@ pub enum VtxoCommand {
 		/// Mention a specific vtxo. You can use it multiple times
 		#[arg(long= "vtxo")]
 		vtxo: Vec<VtxoId>,
-	}
+	},
+
+	/// Import a serialized VTXO into the wallet
+	#[command()]
+	Import {
+		/// VTXO encoded in hex
+		vtxo: String,
+	},
 }
 
 async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::Result<()> {
@@ -105,6 +112,18 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 				wallet.dangerous_drop_vtxo(v).await
 					.context("Failed to drop vtxo")?;
 			}
+		}
+		VtxoCommand::Import { vtxo } => {
+			let vtxo = Vtxo::deserialize_hex(&vtxo).context("invalid vtxo")?;
+
+			let (wallet, _onchain) = open_wallet(&datadir).await
+				.context("Failed to open wallet")?
+				.context("No wallet found")?;
+
+			wallet.import_vtxo(&vtxo).await.context("Failed to import vtxo")?;
+
+			let info = VtxoInfo::from(vtxo);
+			output_json(&info);
 		}
 	}
 	Ok(())

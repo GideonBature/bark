@@ -167,6 +167,13 @@ pub struct OffboardAllRequest {
 
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
+pub struct ImportVtxoRequest {
+	/// Hex-encoded VTXO
+	pub vtxo: String,
+}
+
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct LightningInvoiceRequest {
 	/// The amount to create invoice for (in satoshis)
 	pub amount_sat: u64,
