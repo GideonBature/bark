@@ -541,11 +541,11 @@ impl Bark {
 		self.run(["dev", "vtxo", "drop", "--all", "--dangerous"]).await;
 	}
 
-	pub async fn try_import_vtxos(&self, vtxo_hex: &str) -> anyhow::Result<bark_json::primitives::VtxoInfo> {
-		self.try_run_json(["dev", "vtxo", "import", vtxo_hex]).await
+	pub async fn try_import_vtxos(&self, vtxo_hex: &str) -> anyhow::Result<Vec<bark_json::primitives::VtxoInfo>> {
+		self.try_run_json(["dev", "vtxo", "import", "--vtxo", vtxo_hex]).await
 	}
 
-	pub async fn import_vtxo(&self, vtxo_hex: &str) -> bark_json::primitives::VtxoInfo {
+	pub async fn import_vtxo(&self, vtxo_hex: &str) -> Vec<bark_json::primitives::VtxoInfo> {
 		self.try_import_vtxos(vtxo_hex).await.expect("import_vtxo failed")
 	}
 

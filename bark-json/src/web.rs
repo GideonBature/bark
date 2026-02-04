@@ -168,8 +168,8 @@ pub struct OffboardAllRequest {
 #[derive(Serialize, Deserialize)]
 #[cfg_attr(feature = "utoipa", derive(ToSchema))]
 pub struct ImportVtxoRequest {
-	/// Hex-encoded VTXO
-	pub vtxo: String,
+	/// Hex-encoded VTXOs to import
+	pub vtxos: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize)]

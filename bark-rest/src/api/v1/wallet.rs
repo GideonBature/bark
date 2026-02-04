@@ -673,7 +673,7 @@ pub async fn sync(State(state): State<ServerState>) -> HandlerResult<()> {
 	path = "/import-vtxo",
 	request_body = bark_json::web::ImportVtxoRequest,
 	responses(
-		(status = 200, description = "VTXO imported successfully", body = bark_json::primitives::VtxoInfo),
+		(status = 200, description = "VTXO imported successfully", body = Vec<bark_json::primitives::VtxoInfo>),
 		(status = 400, description = "Invalid VTXO hex or VTXO not owned by wallet", body = error::BadRequestError),
 		(status = 500, description = "Internal server error", body = error::InternalServerError)
 	),
@@ -684,12 +684,20 @@ pub async fn sync(State(state): State<ServerState>) -> HandlerResult<()> {
 pub async fn import_vtxo(
 	State(state): State<ServerState>,
 	Json(body): Json<bark_json::web::ImportVtxoRequest>,
-) -> HandlerResult<Json<bark_json::primitives::VtxoInfo>> {
+) -> HandlerResult<Json<Vec<bark_json::primitives::VtxoInfo>>> {
 	let wallet = state.require_wallet()?;
 
-	let vtxo = ark::Vtxo::deserialize_hex(&body.vtxo).badarg("invalid vtxo hex")?;
+	if body.vtxos.is_empty() {
+		badarg!("No VTXOs provided");
+	}
 
-	wallet.import_vtxo(&vtxo).await.context("Failed to import VTXO")?;
+	let mut imported = Vec::with_capacity(body.vtxos.len());
 
-	Ok(axum::Json(vtxo.into()))
+	for vtxo_hex in body.vtxos {
+		let vtxo = ark::Vtxo::deserialize_hex(&vtxo_hex).badarg("invalid vtxo hex")?;
+		wallet.import_vtxo(&vtxo).await.context("Failed to import VTXO")?;
+		imported.push(vtxo.into());
+	}
+
+	Ok(axum::Json(imported))
 }

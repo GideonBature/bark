@@ -75,11 +75,12 @@ pub enum VtxoCommand {
 		vtxo: Vec<VtxoId>,
 	},
 
-	/// Import a serialized VTXO into the wallet
+	/// Import serialized VTXOs into the wallet
 	#[command()]
 	Import {
 		/// VTXO encoded in hex
-		vtxo: String,
+		#[arg(long = "vtxo")]
+		vtxo: Vec<String>,
 	},
 }
 
@@ -114,16 +115,22 @@ async fn execute_vtxo_command(datadir: &Path, command: VtxoCommand) -> anyhow::R
 			}
 		}
 		VtxoCommand::Import { vtxo } => {
-			let vtxo = Vtxo::deserialize_hex(&vtxo).context("invalid vtxo")?;
+			if vtxo.is_empty() {
+				bail!("No VTXOs provided. Use --vtxo <hex> to specify VTXOs to import");
+			}
 
 			let (wallet, _onchain) = open_wallet(&datadir).await
 				.context("Failed to open wallet")?
 				.context("No wallet found")?;
 
-			wallet.import_vtxo(&vtxo).await.context("Failed to import vtxo")?;
-
-			let info = VtxoInfo::from(vtxo);
-			output_json(&info);
+			let mut imported = Vec::with_capacity(vtxo.len());
+			for vtxo_hex in vtxo {
+				let vtxo = Vtxo::deserialize_hex(&vtxo_hex)
+					.with_context(|| format!("invalid vtxo: {}", vtxo_hex))?;
+				wallet.import_vtxo(&vtxo).await.with_context(|| format!("Failed to import vtxo {}", vtxo.id()))?;
+				imported.push(VtxoInfo::from(vtxo));
+			}
+			output_json(&imported);
 		}
 	}
 	Ok(())
