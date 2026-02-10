@@ -1211,6 +1211,90 @@ impl Wallet {
 		Ok(())
 	}
 
+	/// Checks pending offboard transactions for confirmation status.
+	///
+	/// Following the existing project pattern, we wait indefinitely rather than auto-canceling
+	/// on timeout to avoid issues where a tx confirms after we've restored VTXOs.
+	pub async fn sync_pending_offboards(&self) -> anyhow::Result<()> {
+		let pending_offboards = self.db.get_pending_offboards().await?;
+
+		if pending_offboards.is_empty() {
+			return Ok(());
+		}
+
+		trace!("Checking {} pending offboard transaction(s)", pending_offboards.len());
+
+		for pending in pending_offboards {
+			let status = self.chain.tx_status(pending.offboard_txid).await;
+
+			match status {
+				Ok(TxStatus::Confirmed(_)) => {
+					info!(
+						"Offboard tx {} confirmed, finalizing movement {}",
+						pending.offboard_txid, pending.movement_id,
+					);
+
+					// Mark VTXOs as spent
+					for vtxo_id in &pending.vtxo_ids {
+						if let Err(e) = self.db.update_vtxo_state_checked(
+							*vtxo_id,
+							VtxoState::Spent,
+							&[VtxoStateKind::Locked],
+						).await {
+							warn!("Failed to mark vtxo {} as spent: {:#}", vtxo_id, e);
+						}
+					}
+
+					// Finish the movement as successful
+					if let Err(e) = self.movements.finish_movement(
+						pending.movement_id,
+						MovementStatus::Successful,
+					).await {
+						warn!("Failed to finish movement {}: {:#}", pending.movement_id, e);
+					}
+
+					self.db.remove_pending_offboard(pending.movement_id).await?;
+				}
+				Ok(TxStatus::Mempool) => {
+					trace!(
+						"Offboard tx {} still in mempool, waiting...",
+						pending.offboard_txid,
+					);
+					// Do nothing, keep waiting
+				}
+				Ok(TxStatus::NotFound) | Err(_) => {
+					warn!(
+						"Offboard tx {} not found, canceling movement {}",
+						pending.offboard_txid, pending.movement_id,
+					);
+
+					// Restore VTXOs to spendable
+					for vtxo_id in &pending.vtxo_ids {
+						if let Err(e) = self.db.update_vtxo_state_checked(
+							*vtxo_id,
+							VtxoState::Spendable,
+							&[VtxoStateKind::Locked],
+						).await {
+							warn!("Failed to restore vtxo {} to spendable: {:#}", vtxo_id, e);
+						}
+					}
+
+					// Finish the movement as failed
+					if let Err(e) = self.movements.finish_movement(
+						pending.movement_id,
+						MovementStatus::Failed,
+					).await {
+						warn!("Failed to fail movement {}: {:#}", pending.movement_id, e);
+					}
+
+					self.db.remove_pending_offboard(pending.movement_id).await?;
+				}
+			}
+		}
+
+		Ok(())
+	}
+
 	/// Performs maintenance tasks and performs refresh interactively until finished when needed.
 	/// This risks spending users' funds because refreshing may cost fees.
 	///
@@ -1433,6 +1517,11 @@ impl Wallet {
 			async {
 				if let Err(e) = self.sync_pending_boards().await {
 					warn!("Error syncing pending boards: {:#}", e);
+				}
+			},
+			async {
+				if let Err(e) = self.sync_pending_offboards().await {
+					warn!("Error syncing pending offboards: {:#}", e);
 				}
 			}
 		);

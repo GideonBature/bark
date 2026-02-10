@@ -18,7 +18,8 @@ use crate::movement::manager::OnDropStatus;
 use crate::vtxo::VtxoState;
 use crate::{Wallet, WalletVtxo};
 use crate::movement::update::MovementUpdate;
-use crate::movement::{MovementDestination, MovementStatus};
+use crate::movement::MovementDestination;
+use crate::persist::models::PendingOffboard;
 use crate::server::ArkInfoExt;
 use crate::subsystem::{OffboardMovement, Subsystem};
 
@@ -163,11 +164,19 @@ impl Wallet {
 		movement.apply_update(MovementUpdate::new()
 			.metadata(OffboardMovement::metadata(&signed_offboard_tx))
 		).await.context("error updating movement")?;
-		movement.success().await
-			.context("error marking movement as succesful")?;
 
-		self.mark_vtxos_as_spent(&vtxos).await
-			.context("error marking arkoor VTXOs as spent")?;
+		// Store as pending offboard — don't mark success until confirmed on chain
+		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+		self.db.store_pending_offboard(&PendingOffboard {
+			movement_id: movement.id(),
+			offboard_txid: signed_offboard_tx.compute_txid(),
+			offboard_tx: signed_offboard_tx.clone(),
+			vtxo_ids,
+			destination: destination.to_string(),
+		}).await.context("error storing pending offboard")?;
+
+		// Disarm the guard so it doesn't auto-fail the movement on drop
+		movement.stop();
 
 		Ok(signed_offboard_tx.compute_txid())
 	}
@@ -206,21 +215,32 @@ impl Wallet {
 		let signed_offboard_tx = self.offboard_inner(&mut srv, &vtxos, &vtxo_keys, &req).await
 			.context("error performing offboard")?;
 
-		self.mark_vtxos_as_spent(&vtxos).await?;
+		// Lock VTXOs instead of marking them as spent
+		let vtxo_ids = vtxos.iter().map(|v| v.vtxo_id()).collect::<Vec<_>>();
 		let effective_amt = -SignedAmount::try_from(vtxos_amount)
 			.expect("can't have this many vtxo sats");
-		self.movements.new_finished_movement(
+		let movement_id = self.movements.new_movement_with_update(
 			Subsystem::OFFBOARD,
 			OffboardMovement::Offboard.to_string(),
-			MovementStatus::Successful,
 			MovementUpdate::new()
 				.intended_balance(effective_amt)
 				.effective_balance(effective_amt)
 				.fee(fee)
 				.consumed_vtxos(&vtxos)
-				.sent_to([MovementDestination::bitcoin(destination, req_amount)])
+				.sent_to([MovementDestination::bitcoin(destination.clone(), req_amount)])
 				.metadata(OffboardMovement::metadata(&signed_offboard_tx)),
 		).await?;
+
+		self.lock_vtxos(&vtxos, Some(movement_id)).await?;
+
+		// Store as pending offboard — wait for on-chain confirmation
+		self.db.store_pending_offboard(&PendingOffboard {
+			movement_id,
+			offboard_txid: signed_offboard_tx.compute_txid(),
+			offboard_tx: signed_offboard_tx.clone(),
+			vtxo_ids,
+			destination: destination.to_string(),
+		}).await.context("error storing pending offboard")?;
 
 		Ok(signed_offboard_tx.compute_txid())
 	}

@@ -365,8 +365,9 @@ async fn movement_offboard() {
 		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb),
 	).unwrap();
 
+	// Before confirmation: movement should be Pending
 	let movement = bark.history().await.last().cloned().unwrap();
-	assert_eq!(movement.status, MovementStatus::Successful);
+	assert_eq!(movement.status, MovementStatus::Pending);
 	assert_eq!(movement.subsystem.name, "bark.offboard");
 	assert_eq!(movement.subsystem.kind, "offboard");
 	assert_eq!(movement.intended_balance, -offb_vtxo.amount.to_signed().unwrap());
@@ -382,7 +383,8 @@ async fn movement_offboard() {
 	assert_eq!(*movement.input_vtxos.first().unwrap(), offb_vtxo.id);
 	assert_eq!(movement.output_vtxos.len(), 0);
 	assert_eq!(movement.exited_vtxos.len(), 0);
-	assert_eq!(movement.time.completed_at.is_some(), true);
+	assert_eq!(movement.time.completed_at.is_none(), true,
+		"completed_at should be None while Pending");
 
 	assert_eq!(movement.metadata.is_some(), true);
 	assert_eq!(offboard.offboard_txid,
@@ -394,6 +396,16 @@ async fn movement_offboard() {
 			.map(|hex| serde_json::from_value::<String>(hex.clone()).unwrap()).unwrap()
 		).unwrap().compute_txid(),
 	);
+
+	// Confirm the offboard tx and sync
+	ctx.generate_blocks(1).await;
+	bark.maintain().await;
+
+	// After confirmation: movement should be Successful
+	let movement = bark.history().await.last().cloned().unwrap();
+	assert_eq!(movement.status, MovementStatus::Successful);
+	assert_eq!(movement.time.completed_at.is_some(), true,
+		"completed_at should be set after confirmation");
 }
 
 #[tokio::test]
@@ -449,6 +461,7 @@ async fn movement_send_onchain() {
 	let amount = sat(50_000);
 	let offboard = bark.send_onchain(&addr, amount).await;
 	ctx.generate_blocks(2).await;
+	bark.maintain().await;
 	let vtxos_post_send = bark.vtxo_ids().await;
 
 	let expected_fee = OffboardRequest::calculate_fee(

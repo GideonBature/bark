@@ -240,6 +240,7 @@ async fn list_utxos() {
 	let addr = bark.get_onchain_address().await;
 	let _offb = bark.offboard_all(&addr).await;
 	ctx.generate_blocks(2).await;
+	bark.maintain().await;
 
 	let utxos = bark.utxos().await;
 
@@ -628,8 +629,12 @@ async fn offboard_all() {
 		srv.config().offboard_feerate,
 		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
 	).unwrap();
+
+	// Before confirmation: movement should be Pending
 	let movements = bark1.history().await;
 	let offb_movement = movements.last().unwrap();
+	assert_eq!(offb_movement.status, bark_json::cli::MovementStatus::Pending,
+		"offboard movement should be Pending before confirmation");
 	assert_eq!(offb_movement.input_vtxos.len(), 3, "all offboard vtxos should be in movement");
 	assert_eq!(
 		offb_movement.sent_to.first(),
@@ -639,8 +644,17 @@ async fn offboard_all() {
 		}).as_ref(), "destination should be correct"
 	);
 
-	// We check that provided address received the coins
+	// Confirm the offboard tx and sync
 	ctx.generate_blocks(1).await;
+	bark1.maintain().await;
+
+	// After confirmation: movement should be Successful
+	let movements = bark1.history().await;
+	let offb_movement = movements.last().unwrap();
+	assert_eq!(offb_movement.status, bark_json::cli::MovementStatus::Successful,
+		"offboard movement should be Successful after confirmation");
+
+	// We check that provided address received the coins
 	let balance = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(balance, init_balance - expected_fee);
 	assert_eq!(bark2.inround_balance().await, sat(0));
@@ -691,8 +705,12 @@ async fn offboard_vtxos() {
 		srv.config().offboard_feerate,
 		Weight::from_vb_unchecked(srv.config().offboard_fixed_fee_vb as u64),
 	).unwrap();
+
+	// Before confirmation: movement should be Pending
 	let movements = bark1.history().await;
 	let offb_movement = movements.last().unwrap();
+	assert_eq!(offb_movement.status, bark_json::cli::MovementStatus::Pending,
+		"offboard movement should be Pending before confirmation");
 	assert_eq!(offb_movement.input_vtxos.len(), 1, "only provided vtxo should be offboarded");
 	assert_eq!(offb_movement.input_vtxos[0], vtxo_to_offboard.id, "only provided vtxo should be offboarded");
 	assert_eq!(
@@ -703,8 +721,17 @@ async fn offboard_vtxos() {
 		}).as_ref(), "destination should be correct"
 	);
 
-	// We check that provided address received the coins
+	// Confirm the offboard tx and sync
 	ctx.generate_blocks(1).await;
+	bark1.maintain().await;
+
+	// After confirmation: movement should be Successful
+	let movements = bark1.history().await;
+	let offb_movement = movements.last().unwrap();
+	assert_eq!(offb_movement.status, bark_json::cli::MovementStatus::Successful,
+		"offboard movement should be Successful after confirmation");
+
+	// We check that provided address received the coins
 	let balance = ctx.bitcoind().get_received_by_address(&address);
 	assert_eq!(balance, vtxo_to_offboard.amount - expected_fee);
 	assert_eq!(bark2.inround_balance().await, sat(0));
@@ -724,7 +751,10 @@ async fn bark_send_onchain() {
 	let send_amount = sat(300_000);
 	let addr = bark2.get_onchain_address().await;
 	bark1.send_onchain(&addr, send_amount).await;
+
+	// The offboard is now pending until confirmed
 	ctx.generate_blocks(2).await;
+	bark1.maintain().await;
 
 	let expected_fee = OffboardRequest::calculate_fee(
 		&addr.script_pubkey(),
