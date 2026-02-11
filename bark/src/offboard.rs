@@ -15,6 +15,7 @@ use bitcoin_ext::P2TR_DUST;
 use server_rpc::{protos, ServerConnection, TryFromBytes};
 
 use crate::movement::manager::OnDropStatus;
+use crate::movement::MovementStatus;
 use crate::vtxo::VtxoState;
 use crate::{Wallet, WalletVtxo};
 use crate::movement::update::MovementUpdate;
@@ -165,18 +166,31 @@ impl Wallet {
 			.metadata(OffboardMovement::metadata(&signed_offboard_tx))
 		).await.context("error updating movement")?;
 
-		// Store as pending offboard — don't mark success until confirmed on chain
-		let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
-		self.db.store_pending_offboard(&PendingOffboard {
-			movement_id: movement.id(),
-			offboard_txid: signed_offboard_tx.compute_txid(),
-			offboard_tx: signed_offboard_tx.clone(),
-			vtxo_ids,
-			destination: destination.to_string(),
-		}).await.context("error storing pending offboard")?;
+		if self.config.offboard_required_confirmations == 0 {
+			// No confirmation required — mark VTXOs as spent and succeed immediately
+			for vtxo in &vtxos {
+				self.db.update_vtxo_state_checked(
+					vtxo.id(),
+					VtxoState::Spent,
+					&[crate::vtxo::VtxoStateKind::Locked],
+				).await.context("error marking vtxo as spent")?;
+			}
+			movement.success().await
+				.context("error finishing movement")?;
+		} else {
+			// Store as pending offboard — don't mark success until confirmed on chain
+			let vtxo_ids = vtxos.iter().map(|v| v.id()).collect::<Vec<_>>();
+			self.db.store_pending_offboard(&PendingOffboard {
+				movement_id: movement.id(),
+				offboard_txid: signed_offboard_tx.compute_txid(),
+				offboard_tx: signed_offboard_tx.clone(),
+				vtxo_ids,
+				destination: destination.to_string(),
+			}).await.context("error storing pending offboard")?;
 
-		// Disarm the guard so it doesn't auto-fail the movement on drop
-		movement.stop();
+			// Disarm the guard so it doesn't auto-fail the movement on drop
+			movement.stop();
+		}
 
 		Ok(signed_offboard_tx.compute_txid())
 	}
@@ -233,14 +247,29 @@ impl Wallet {
 
 		self.lock_vtxos(&vtxos, Some(movement_id)).await?;
 
-		// Store as pending offboard — wait for on-chain confirmation
-		self.db.store_pending_offboard(&PendingOffboard {
-			movement_id,
-			offboard_txid: signed_offboard_tx.compute_txid(),
-			offboard_tx: signed_offboard_tx.clone(),
-			vtxo_ids,
-			destination: destination.to_string(),
-		}).await.context("error storing pending offboard")?;
+		if self.config.offboard_required_confirmations == 0 {
+			// No confirmation required — mark VTXOs as spent and succeed immediately
+			for vtxo in &vtxos {
+				self.db.update_vtxo_state_checked(
+					vtxo.vtxo_id(),
+					VtxoState::Spent,
+					&[crate::vtxo::VtxoStateKind::Locked],
+				).await.context("error marking vtxo as spent")?;
+			}
+			self.movements.finish_movement(
+				movement_id,
+				MovementStatus::Successful,
+			).await.context("error finishing movement")?;
+		} else {
+			// Store as pending offboard — wait for on-chain confirmation
+			self.db.store_pending_offboard(&PendingOffboard {
+				movement_id,
+				offboard_txid: signed_offboard_tx.compute_txid(),
+				offboard_tx: signed_offboard_tx.clone(),
+				vtxo_ids,
+				destination: destination.to_string(),
+			}).await.context("error storing pending offboard")?;
+		}
 
 		Ok(signed_offboard_tx.compute_txid())
 	}

@@ -1222,13 +1222,25 @@ impl Wallet {
 			return Ok(());
 		}
 
+		let current_height = self.chain.tip().await?;
+		let required_confs = self.config.offboard_required_confirmations;
+
 		trace!("Checking {} pending offboard transaction(s)", pending_offboards.len());
 
 		for pending in pending_offboards {
 			let status = self.chain.tx_status(pending.offboard_txid).await;
 
 			match status {
-				Ok(TxStatus::Confirmed(_)) => {
+				Ok(TxStatus::Confirmed(block_ref)) => {
+					let confs = current_height - (block_ref.height - 1);
+					if confs < required_confs as BlockHeight {
+						trace!(
+							"Offboard tx {} has {}/{} confirmations, waiting...",
+							pending.offboard_txid, confs, required_confs,
+						);
+						continue;
+					}
+
 					info!(
 						"Offboard tx {} confirmed, finalizing movement {}",
 						pending.offboard_txid, pending.movement_id,
