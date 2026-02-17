@@ -277,6 +277,10 @@ impl BarkPersister for Dummy {
 		}]).pop().unwrap())
 	}
 
+	async fn wipe_vtxo_raw_data(&self, _ids: &[VtxoId]) -> anyhow::Result<()> {
+		Ok(())
+	}
+
 	async fn store_round_state_lock_vtxos(&self, _round_state: &RoundState) -> anyhow::Result<RoundStateId> {
 		Ok(RoundStateId(5))
 	}

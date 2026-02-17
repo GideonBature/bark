@@ -15,6 +15,7 @@ use ark::lightning::{Invoice, PaymentHash, Preimage};
 use ark::vtxo::VtxoRef;
 use bitcoin_ext::BlockDelta;
 
+use crate::persist::sqlite::query;
 use crate::{Vtxo, VtxoId, WalletProperties};
 use crate::exit::{ExitState, ExitTxOrigin};
 use crate::movement::{Movement, MovementId, MovementStatus, MovementSubsystem, PaymentMethod};
@@ -531,7 +532,7 @@ pub fn get_wallet_vtxo_by_id(
 	conn: &Connection,
 	id: VtxoId
 ) -> anyhow::Result<Option<WalletVtxo>> {
-	let query = "SELECT raw_vtxo, state FROM vtxo_view WHERE id = ?1";
+	let query = "SELECT raw_vtxo, state FROM vtxo_view WHERE id = ?1 AND raw_vtxo IS NOT NULL";
 	let mut statement = conn.prepare(query)?;
 	let mut rows = statement.query([id.to_string()])?;
 
@@ -546,6 +547,7 @@ pub fn get_all_vtxos(conn: &Connection) -> anyhow::Result<Vec<WalletVtxo>> {
 	let query = "
 		SELECT raw_vtxo, state
 		FROM vtxo_view
+		WHERE raw_vtxo IS NOT NULL
 		ORDER BY expiry_height ASC, amount_sat DESC";
 
 	let mut statement = conn.prepare(query)?;
@@ -561,7 +563,8 @@ pub fn get_vtxos_by_state(
 	let query = "
 		SELECT raw_vtxo, state
 		FROM vtxo_view
-		WHERE state_kind IN (SELECT atom FROM json_each(?))
+		WHERE raw_vtxo IS NOT NULL
+			AND state_kind IN (SELECT atom FROM json_each(?))
 		ORDER BY expiry_height ASC, amount_sat DESC";
 
 	let mut statement = conn.prepare(query)?;
@@ -645,9 +648,34 @@ pub fn update_vtxo_state_checked(
 
 	match nb_inserted {
 		0 => bail!("No vtxo with provided id or old states"),
-		1 => Ok(get_wallet_vtxo_by_id(conn, vtxo_id)?.unwrap()),
+		1 => {
+			// If raw_vtxo was wiped (set to NULL), get_wallet_vtxo_by_id returns None.
+			// This can happen when re-marking an already-spent vtxo whose data was wiped.
+			let vtxo = get_wallet_vtxo_by_id(conn, vtxo_id)?
+				.context("vtxo state was updated but raw data has been wiped")?;
+			Ok(vtxo)
+		},
 		_ => panic!("Corrupted database. A vtxo can have only one state"),
 	}
+}
+
+/// Wipes raw VTXO data for the given IDs by setting `raw_vtxo` to NULL.
+///
+/// This frees storage space while retaining VTXO metadata (id, amount,
+/// expiry height, state history).
+pub fn wipe_vtxo_raw_data(conn: &Connection, ids: &[VtxoId]) -> anyhow::Result<()> {
+	if ids.is_empty() {
+		return Ok(());
+	}
+
+	let query = "UPDATE bark_vtxo SET raw_vtxo = NULL WHERE id IN (SELECT atom FROM json_each(?))";
+
+	let mut statement = conn.prepare(query)?;
+	let ids_json = serde_json::to_string(
+		&ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+	)?;
+	statement.execute([ids_json])?;
+	Ok(())
 }
 
 pub fn store_vtxo_key(

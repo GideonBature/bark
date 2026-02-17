@@ -645,4 +645,17 @@ pub trait BarkPersister: Send + Sync + 'static {
 		new_state: VtxoState,
 		allowed_old_states: &[VtxoStateKind],
 	) -> anyhow::Result<WalletVtxo>;
+
+	/// Wipes the raw VTXO data for the given [VtxoId]s, setting it to NULL.
+	///
+	/// Raw VTXOs can be large and are no longer needed after spending.
+	/// This frees storage while keeping the VTXO metadata (id, amount,
+	/// expiry, state) intact.
+	///
+	/// # Parameters
+	/// - `ids`: The [VtxoId]s whose raw data should be wiped.
+	///
+	/// # Errors
+	/// - Returns an error if the database operation fails.
+	async fn wipe_vtxo_raw_data(&self, ids: &[VtxoId]) -> anyhow::Result<()>;
 }

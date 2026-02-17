@@ -407,6 +407,11 @@ impl BarkPersister for SqliteClient {
 		let conn = self.connect()?;
 		query::update_vtxo_state_checked(&conn, vtxo_id, new_state, allowed_old_states)
 	}
+
+	async fn wipe_vtxo_raw_data(&self, ids: &[VtxoId]) -> anyhow::Result<()> {
+		let conn = self.connect()?;
+		query::wipe_vtxo_raw_data(&conn, ids)
+	}
 }
 
 #[cfg(any(test, doc))]
@@ -495,6 +500,51 @@ mod test {
 		assert_eq!(vtxos.len(), 2);
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_2));
 		assert!(vtxos.iter().any(|v| v.vtxo == *vtxo_3));
+
+		conn.close().unwrap();
+	}
+
+	#[tokio::test]
+	async fn test_wipe_vtxo_raw_data() {
+		let vtxo_1 = &VTXO_VECTORS.board_vtxo;
+		let vtxo_2 = &VTXO_VECTORS.arkoor_htlc_out_vtxo;
+
+		let (cs, conn) = in_memory_db();
+		let db = SqliteClient::open(cs).unwrap();
+
+		db.store_vtxos(&[
+			(vtxo_1, &VtxoState::Spendable), (vtxo_2, &VtxoState::Spendable)
+		]).await.unwrap();
+
+		// Mark vtxo_1 as spent
+		db.update_vtxo_state_checked(
+			vtxo_1.id(), VtxoState::Spent, &VtxoStateKind::UNSPENT_STATES,
+		).await.unwrap();
+
+		// Wipe raw data for vtxo_1
+		db.wipe_vtxo_raw_data(&[vtxo_1.id()]).await.unwrap();
+
+		// Wiped VTXO should no longer be returned by get_wallet_vtxo
+		assert!(db.get_wallet_vtxo(vtxo_1.id()).await.unwrap().is_none());
+
+		// Wiped VTXO should not appear in get_all_vtxos
+		let all = db.get_all_vtxos().await.unwrap();
+		assert_eq!(all.len(), 1);
+		assert_eq!(all[0].vtxo, *vtxo_2);
+
+		// Wiped VTXO should not appear in get_vtxos_by_state
+		let spent = db.get_vtxos_by_state(&[VtxoStateKind::Spent]).await.unwrap();
+		assert!(spent.is_empty());
+
+		// has_spent_vtxo should still work for wiped VTXOs
+		assert!(db.has_spent_vtxo(vtxo_1.id()).await.unwrap());
+
+		// vtxo_2 should still be retrievable
+		let vtxo_2_db = db.get_wallet_vtxo(vtxo_2.id()).await.unwrap().unwrap();
+		assert_eq!(vtxo_2_db.vtxo, *vtxo_2);
+
+		// Wiping empty list should be a no-op
+		db.wipe_vtxo_raw_data(&[]).await.unwrap();
 
 		conn.close().unwrap();
 	}

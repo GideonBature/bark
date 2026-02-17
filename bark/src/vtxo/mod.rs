@@ -36,6 +36,9 @@ impl Wallet {
 	/// This operation is idempotent: VTXOs already in [VtxoState::Spent] will
 	/// remain spent (a redundant state entry may be added to history).
 	///
+	/// Unless `keep_spent_vtxo_raw_data` is set in [Config](crate::Config),
+	/// the raw VTXO data is wiped from storage after marking them as spent.
+	///
 	/// # Errors
 	/// - If the VTXO doesn't exist.
 	/// - If a database error occurs.
@@ -48,7 +51,20 @@ impl Wallet {
 			VtxoStateKind::Locked,
 			VtxoStateKind::Spent,
 		];
-		self.set_vtxo_states(vtxos, &VtxoState::Spent, ALLOWED).await
+
+		let ids = vtxos.into_iter()
+			.map(|v| v.vtxo_id())
+			.collect::<Vec<_>>();
+
+		self.set_vtxo_states(&ids, &VtxoState::Spent, ALLOWED).await?;
+
+		if !self.config.keep_spent_vtxo_raw_data {
+			if let Err(e) = self.db.wipe_vtxo_raw_data(&ids).await {
+				error!("Failed to wipe raw VTXO data for {} VTXOs: {:#}", ids.len(), e);
+			}
+		}
+
+		Ok(())
 	}
 
 	/// Updates the state set the [VtxoState] of VTXOs corresponding to each given

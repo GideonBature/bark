@@ -129,6 +129,15 @@ pub struct Config {
 	///
 	/// Default value: 6 for mainnet, 2 for testnets
 	pub round_tx_required_confirmations: BlockHeight,
+
+	/// Whether to keep raw VTXO data after VTXOs are spent.
+	///
+	/// Raw VTXOs can be large and are no longer needed after spending.
+	/// Set to `true` to retain them for debugging purposes.
+	///
+	/// Default value: false (raw data is wiped after spending)
+	#[serde(default)]
+	pub keep_spent_vtxo_raw_data: bool,
 }
 
 impl Config {
@@ -148,6 +157,7 @@ impl Config {
 			htlc_recv_claim_delta: 18,
 			fallback_fee_rate: None,
 			round_tx_required_confirmations: 2,
+			keep_spent_vtxo_raw_data: false,
 		};
 
 		if network != Network::Bitcoin {
