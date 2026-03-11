@@ -300,7 +300,7 @@ impl Wallet {
 			protos::LightningReceiveStatus::Accepted |
 			protos::LightningReceiveStatus::HtlcsReady => {},
 			protos::LightningReceiveStatus::Created => {
-				warn!("sender didn't initiate payment yet");
+				trace!("sender hasn't initiated payment yet, nothing to claim");
 				return Ok(None);
 			},
 			protos::LightningReceiveStatus::Settled => bail!("payment already settled"),
