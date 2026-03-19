@@ -282,6 +282,8 @@ impl<'a> RefreshStrategy<'a> {
 	///
 	/// A [WalletVtxo] is selected when at least one of the following strict conditions holds:
 	/// - It is within `vtxo_refresh_expiry_threshold` blocks of expiry at `tip`.
+	/// - Its exit depth has reached `max_arkoor_depth` as advertised by the server, meaning the
+	///   server will refuse to cosign any further OOR payments spending it.
 	///
 	/// Parameters:
 	/// - `wallet`: [Wallet] context used to read configuration and Ark parameters.
@@ -322,6 +324,8 @@ impl<'a> RefreshStrategy<'a> {
 	///   relative to `tip`.
 	/// - It is uneconomical to unilaterally exit at the provided `fee_rate` (e.g., its amount is
 	///   lower than the estimated exit cost).
+	/// - Its exit depth is within 2 genesis items of the server's `max_arkoor_depth` limit
+	///   (i.e., one OOR payment away from being rejected).
 	///
 	/// Parameters:
 	/// - `wallet`: [Wallet] context used to read configuration and Ark parameters.
@@ -391,6 +395,42 @@ impl<'a> RefreshStrategy<'a> {
 		Ok(false)
 	}
 
+	/// Returns the `max_arkoor_depth` advertised by the server, or `None` if the wallet
+	/// has no active server connection.
+	async fn server_max_arkoor_depth(&self) -> anyhow::Result<Option<u16>> {
+		Ok(self.wallet.ark_info().await?.map(|i| i.max_arkoor_depth))
+	}
+
+	async fn check_must_refresh_depth(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+		if let Some(max_depth) = self.server_max_arkoor_depth().await? {
+			if vtxo.exit_depth() >= max_depth {
+				warn!(
+					"VTXO {} exit depth {} has reached the server maximum of {}; \
+					 must be refreshed before further OOR payments are possible",
+					vtxo.id(), vtxo.exit_depth(), max_depth,
+				);
+				return Ok(true);
+			}
+		}
+		Ok(false)
+	}
+
+	async fn check_should_refresh_depth(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
+		if let Some(max_depth) = self.server_max_arkoor_depth().await? {
+			// Warn when the VTXO is within 2 genesis items of the limit (one OOR payment away).
+			let soft_depth_threshold = max_depth.saturating_sub(2);
+			if vtxo.exit_depth() >= soft_depth_threshold {
+				warn!(
+					"VTXO {} exit depth {} is approaching the server maximum of {}; \
+					 should be refreshed on next opportunity",
+					vtxo.id(), vtxo.exit_depth(), max_depth,
+				);
+				return Ok(true);
+			}
+		}
+		Ok(false)
+	}
+
 	fn check_should_refresh(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		let soft_threshold = self.wallet.config().vtxo_refresh_expiry_threshold + 28;
 		if self.tip > vtxo.expiry_height().saturating_sub(soft_threshold) {
@@ -422,11 +462,20 @@ impl<'a> RefreshStrategy<'a> {
 impl FilterVtxos for RefreshStrategy<'_> {
 	async fn matches(&self, vtxo: &WalletVtxo) -> anyhow::Result<bool> {
 		match self.inner {
-			InnerRefreshStrategy::MustRefresh => self.check_must_refresh(vtxo),
-			InnerRefreshStrategy::ShouldRefreshInclusive =>
-				Ok(self.check_must_refresh(vtxo)? || self.check_should_refresh(vtxo)?),
-			InnerRefreshStrategy::ShouldRefreshExclusive =>
-				Ok(!self.check_must_refresh(vtxo)? && self.check_should_refresh(vtxo)?),
+			InnerRefreshStrategy::MustRefresh =>
+				Ok(self.check_must_refresh(vtxo)? || self.check_must_refresh_depth(vtxo).await?),
+			InnerRefreshStrategy::ShouldRefreshInclusive => Ok(
+				self.check_must_refresh(vtxo)? ||
+				self.check_must_refresh_depth(vtxo).await? ||
+				self.check_should_refresh(vtxo)? ||
+				self.check_should_refresh_depth(vtxo).await?
+			),
+			InnerRefreshStrategy::ShouldRefreshExclusive => Ok(
+				!self.check_must_refresh(vtxo)? &&
+				!self.check_must_refresh_depth(vtxo).await? &&
+				(self.check_should_refresh(vtxo)? ||
+				self.check_should_refresh_depth(vtxo).await?)
+			),
 			InnerRefreshStrategy::ShouldRefreshIfMustRefresh =>
 				bail!("FilterVtxos::matches called on RefreshStrategy::should_refresh_if_must"),
 		}
@@ -442,11 +491,14 @@ impl FilterVtxos for RefreshStrategy<'_> {
 				for i in (0..vtxos.len()).rev() {
 					let keep = {
 						let vtxo = vtxos[i].borrow();
-						if self.check_must_refresh(vtxo)? {
+						let is_must = self.check_must_refresh(vtxo)?
+							|| self.check_must_refresh_depth(vtxo).await?;
+						if is_must {
 							must_refresh = true;
 							true
 						} else {
 							self.check_should_refresh(vtxo)?
+								|| self.check_should_refresh_depth(vtxo).await?
 						}
 					};
 					if !keep {

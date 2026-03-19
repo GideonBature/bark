@@ -91,6 +91,12 @@ pub struct ArkInfo {
 
 	/// Fee schedule for all Ark operations
 	pub fees: FeeSchedule,
+
+	/// Maximum number of OOR transitions allowed after a VTXO tree leaf.
+	/// Once a VTXO's exit depth reaches this value the server will refuse to
+	/// cosign further OOR transactions spending it. Clients should refresh
+	/// their VTXOs into a round before this limit is reached.
+	pub max_arkoor_depth: u16,
 }
 
 /// Request for the creation of an vtxo.

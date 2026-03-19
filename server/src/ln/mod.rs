@@ -131,6 +131,7 @@ impl Server {
 			use_checkpoints: true,
 			max_outputs_per_input: self.config.max_arkoor_fanout,
 			disallow_unnecessary_dust: true,
+			max_input_exit_depth: self.config.max_arkoor_depth,
 		};
 		let builder = self.validate_cosign_request(validation, request)
 			.badarg("invalid cosign request")?;
@@ -308,6 +309,7 @@ impl Server {
 			use_checkpoints: true,
 			max_outputs_per_input: 1, // should claim all
 			disallow_unnecessary_dust: false, // don't need this check if max output is 1
+			max_input_exit_depth: self.config.max_arkoor_depth,
 		};
 		let builder = self.validate_cosign_request(validation, cosign_request)
 			.badarg("invalid cosign request")?;
@@ -660,6 +662,7 @@ impl Server {
 			use_checkpoints: false,
 			max_outputs_per_input: 1, // should claim all
 			disallow_unnecessary_dust: false, // don't need this check if max output is 1
+			max_input_exit_depth: self.config.max_arkoor_depth,
 		};
 		let builder = self.validate_cosign_request(validation, cosign_request)
 			.badarg("invalid cosign request")?;

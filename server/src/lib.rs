@@ -280,6 +280,7 @@ impl Server {
 			offboard_feerate: self.offboard_feerate(),
 			ln_receive_anti_dos_required: self.config.ln_receive_anti_dos_required,
 			fees: self.config.fees.clone(),
+			max_arkoor_depth: self.config.max_arkoor_depth,
 		}
 	}
 

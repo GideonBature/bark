@@ -16,6 +16,26 @@ async fn send_simple_arkoor() {
 
 	assert_eq!(60_000, bark1.spendable_balance().await.to_sat());
 	assert_eq!(20_000, bark2.spendable_balance().await.to_sat());
+
+	// Verify that VTXO exit depths are within acceptable limits.
+	// This guards against the DDoS vector where many small OOR payments
+	// cause exit depth to balloon, creating large VTXOs that strain mobile clients.
+	let bark1_vtxos = bark1.vtxos().await;
+	for vtxo in &bark1_vtxos {
+		assert!(
+			vtxo.vtxo.exit_depth.unwrap_or(0) < srv.config().max_arkoor_depth,
+			"VTXO {} exit depth {} must be less than max arkoor depth {}",
+			vtxo.vtxo.id, vtxo.vtxo.exit_depth.unwrap_or(0), srv.config().max_arkoor_depth,
+		);
+	}
+	let bark2_vtxos = bark2.vtxos().await;
+	for vtxo in &bark2_vtxos {
+		assert!(
+			vtxo.vtxo.exit_depth.unwrap_or(0) < srv.config().max_arkoor_depth,
+			"VTXO {} exit depth {} must be less than max arkoor depth {}",
+			vtxo.vtxo.id, vtxo.vtxo.exit_depth.unwrap_or(0), srv.config().max_arkoor_depth,
+		);
+	}
 }
 
 #[tokio::test]
