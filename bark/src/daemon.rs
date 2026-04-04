@@ -219,6 +219,10 @@ impl DaemonProcess {
 
 	/// Run a process that will recursively check the server connection
 	async fn run_server_connection_check_process(&self) {
+		// Seed the connected flag from whatever state run_daemon left us in.
+		let connected = self.wallet.server.read().is_some();
+		self.connected.store(connected, Ordering::Relaxed);
+
 		loop {
 			futures::select! {
 				_ = tokio::time::sleep(self.fast_interval()).fuse() => {},
@@ -271,9 +275,6 @@ impl DaemonProcess {
 	}
 
 	pub async fn run(self) {
-		let connected = self.wallet.server.read().is_some();
-		self.connected.store(connected, Ordering::Relaxed);
-
 		let _ = futures::join!(
 			self.run_server_connection_check_process(),
 			self.run_round_events_process(),

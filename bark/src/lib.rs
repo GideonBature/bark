@@ -485,6 +485,12 @@ pub struct WalletProperties {
 	/// changes, the wallet will refuse to connect and warn the user
 	/// to perform an emergency exit.
 	pub server_pubkey: Option<PublicKey>,
+
+	/// The server's mailbox public key.
+	///
+	/// Stored so that Ark addresses can be generated offline without
+	/// requiring a live connection to the Ark server.
+	pub mailbox_pubkey: Option<PublicKey>,
 }
 
 /// Struct representing an extended private key derived from a
@@ -825,16 +831,24 @@ impl Wallet {
 	///
 	/// May return an error if the address at the given index has not been derived yet.
 	pub async fn peek_address(&self, index: u32) -> anyhow::Result<ark::Address> {
-		let (_, ark_info) = &self.require_server().await?;
-		let network = self.properties().await?.network;
+		let properties = self.properties().await?;
+		let network = properties.network;
 		let keypair = self.peek_keypair(index).await?;
 		let mailbox = self.mailbox_identifier();
 
+		let (server_pubkey, mailbox_pubkey) =
+			if let (Some(spk), Some(mpk)) = (properties.server_pubkey, properties.mailbox_pubkey) {
+				(spk, mpk)
+			} else {
+				let (_, ark_info) = self.require_server().await?;
+				(ark_info.server_pubkey, ark_info.mailbox_pubkey)
+			};
+
 		Ok(ark::Address::builder()
 			.testnet(network != bitcoin::Network::Bitcoin)
-			.server_pubkey(ark_info.server_pubkey)
+			.server_pubkey(server_pubkey)
 			.pubkey_policy(keypair.public_key())
-			.mailbox(ark_info.mailbox_pubkey, mailbox, &keypair)
+			.mailbox(mailbox_pubkey, mailbox, &keypair)
 			.expect("Failed to assign mailbox")
 			.into_address().unwrap())
 	}
@@ -873,18 +887,18 @@ impl Wallet {
 		}
 
 		// Try to connect to the server and get its pubkey
-		let server_pubkey = if !force {
+		let (server_pubkey, mailbox_pubkey) = if !force {
 			match Self::connect_to_server(&config, network).await {
 				Ok(conn) => {
 					let ark_info = conn.ark_info().await?;
-					Some(ark_info.server_pubkey)
+					(Some(ark_info.server_pubkey), Some(ark_info.mailbox_pubkey))
 				}
 				Err(err) => {
 					bail!("Failed to connect to provided server (if you are sure use the --force flag): {:#}", err);
 				}
 			}
 		} else {
-			None
+			(None, None)
 		};
 
 		let wallet_fingerprint = WalletSeed::new(network, &mnemonic.to_seed("")).fingerprint();
@@ -892,6 +906,7 @@ impl Wallet {
 			network,
 			fingerprint: wallet_fingerprint,
 			server_pubkey,
+			mailbox_pubkey,
 		};
 
 		// write the config to db
@@ -971,14 +986,7 @@ impl Wallet {
 		).await?;
 		let chain = Arc::new(chain_source_client);
 
-		let server = match Self::connect_to_server(&config, properties.network).await {
-			Ok(s) => Some(s),
-			Err(e) => {
-				warn!("Ark server handshake failed: {:#}", e);
-				None
-			}
-		};
-		let server = parking_lot::RwLock::new(server);
+		let server = parking_lot::RwLock::new(None);
 
 		let notifications = NotificationDispatch::new();
 		let movements = Arc::new(MovementManager::new(db.clone(), notifications.clone()));
@@ -1035,68 +1043,64 @@ impl Wallet {
 	}
 
 	async fn require_server(&self) -> anyhow::Result<(ServerConnection, ArkInfo)> {
+		// Connect lazily if not yet connected.
+		if self.server.read().is_none() {
+			let network = self.properties().await?.network;
+			let conn = Self::connect_to_server(&self.config, network).await
+				.context("You should be connected to Ark server to perform this action")?;
+			let _ = self.server.write().insert(conn);
+		}
+
 		let conn = self.server.read().clone()
 			.context("You should be connected to Ark server to perform this action")?;
 		let ark_info = conn.ark_info().await?;
 
-		// Check if server pubkey has changed
-		if let Some(stored_pubkey) = self.properties().await?.server_pubkey {
-			if stored_pubkey != ark_info.server_pubkey {
-				log_server_pubkey_changed_error(stored_pubkey, ark_info.server_pubkey);
-				bail!("Server public key has changed. You should exit all your VTXOs!");
-			}
-		} else {
-			// First time connecting after upgrade - store the server pubkey
-			self.db.set_server_pubkey(ark_info.server_pubkey).await?;
-			info!("Stored server pubkey for existing wallet: {}", ark_info.server_pubkey);
-		}
+		self.check_and_store_server_keys(&ark_info).await?;
 
 		Ok((conn, ark_info))
 	}
 
 	pub async fn refresh_server(&self) -> anyhow::Result<()> {
 		let server = self.server.read().clone();
-		let properties = self.properties().await?;
 
 		let srv = if let Some(srv) = server {
 			srv.check_connection().await?;
 			let ark_info = srv.ark_info().await?;
 			ark_info.fees.validate().context("invalid fee schedule")?;
-
-			// Check if server pubkey has changed
-			if let Some(stored_pubkey) = properties.server_pubkey {
-				if stored_pubkey != ark_info.server_pubkey {
-					log_server_pubkey_changed_error(stored_pubkey, ark_info.server_pubkey);
-					bail!("Server public key has changed. You should exit all your VTXOs!");
-				}
-			} else {
-				// First time connecting after upgrade - store the server pubkey
-				self.db.set_server_pubkey(ark_info.server_pubkey).await?;
-				info!("Stored server pubkey for existing wallet: {}", ark_info.server_pubkey);
-			}
-
+			self.check_and_store_server_keys(&ark_info).await?;
 			srv
 		} else {
+			let properties = self.properties().await?;
 			let conn = Self::connect_to_server(&self.config, properties.network).await?;
 			let ark_info = conn.ark_info().await?;
 			ark_info.fees.validate().context("invalid fee schedule")?;
-
-			// Check if server pubkey has changed
-			if let Some(stored_pubkey) = properties.server_pubkey {
-				if stored_pubkey != ark_info.server_pubkey {
-					log_server_pubkey_changed_error(stored_pubkey, ark_info.server_pubkey);
-					bail!("Server public key has changed. You should exit all your VTXOs!");
-				}
-			} else {
-				// First time connecting after upgrade - store the server pubkey
-				self.db.set_server_pubkey(ark_info.server_pubkey).await?;
-				info!("Stored server pubkey for existing wallet: {}", ark_info.server_pubkey);
-			}
-
+			self.check_and_store_server_keys(&ark_info).await?;
 			conn
 		};
 
 		let _ = self.server.write().insert(srv);
+
+		Ok(())
+	}
+
+	/// Validate that the server's public keys match what we have stored,
+	/// and persist them if this is the first time connecting after an upgrade.
+	async fn check_and_store_server_keys(&self, ark_info: &ArkInfo) -> anyhow::Result<()> {
+		let properties = self.properties().await?;
+
+		if let Some(stored_pubkey) = properties.server_pubkey {
+			if stored_pubkey != ark_info.server_pubkey {
+				log_server_pubkey_changed_error(stored_pubkey, ark_info.server_pubkey);
+				bail!("Server public key has changed. You should exit all your VTXOs!");
+			}
+		} else {
+			self.db.set_server_pubkey(ark_info.server_pubkey).await?;
+			info!("Stored server pubkey for existing wallet: {}", ark_info.server_pubkey);
+		}
+
+		if properties.mailbox_pubkey.is_none() {
+			self.db.set_mailbox_pubkey(ark_info.mailbox_pubkey).await?;
+		}
 
 		Ok(())
 	}
@@ -1108,6 +1112,12 @@ impl Wallet {
 			Some(srv) => Ok(Some(srv.ark_info().await?)),
 			_ => Ok(None),
 		}
+	}
+
+	/// Return [ArkInfo], connecting to the server if needed.
+	pub async fn require_ark_info(&self) -> anyhow::Result<ArkInfo> {
+		let (_, ark_info) = self.require_server().await?;
+		Ok(ark_info)
 	}
 
 	/// Return the [Balance] of the wallet.
@@ -1965,6 +1975,11 @@ impl Wallet {
 		self: &Arc<Self>,
 		onchain: Arc<RwLock<dyn DaemonizableOnchainWallet>>,
 	) -> anyhow::Result<DaemonHandle> {
+		// Establish the server connection eagerly so callers can rely on the
+		// connected state being up-to-date as soon as the daemon is running.
+		if let Err(e) = self.refresh_server().await {
+			warn!("Could not connect to Ark server on daemon start: {:#}", e);
+		}
 		// NB currently can't error but it's a pretty common method and quite likely that error
 		// cases will be introduces later
 		Ok(crate::daemon::start_daemon(self.clone(), onchain))

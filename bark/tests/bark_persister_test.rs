@@ -61,10 +61,15 @@ impl BarkPersister for Dummy {
 			network: Network::Bitcoin,
 			fingerprint: Fingerprint::default(),
 			server_pubkey: None,
+			mailbox_pubkey: None,
 		}))
 	}
 
 	async fn set_server_pubkey(&self, _server_pubkey: PublicKey) -> anyhow::Result<()> {
+		Ok(())
+	}
+
+	async fn set_mailbox_pubkey(&self, _mailbox_pubkey: PublicKey) -> anyhow::Result<()> {
 		Ok(())
 	}
 

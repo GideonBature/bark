@@ -35,14 +35,15 @@ pub (crate) fn set_properties(
 	properties: &WalletProperties,
 ) -> anyhow::Result<()> {
 	let query =
-		"INSERT INTO bark_properties (id, network, fingerprint, server_pubkey)
-		VALUES (1, :network, :fingerprint, :server_pubkey)";
+		"INSERT INTO bark_properties (id, network, fingerprint, server_pubkey, mailbox_pubkey)
+		VALUES (1, :network, :fingerprint, :server_pubkey, :mailbox_pubkey)";
 	let mut statement = conn.prepare(query)?;
 
 	statement.execute(named_params! {
 		":network": properties.network.to_string(),
 		":fingerprint": properties.fingerprint.to_string(),
 		":server_pubkey": properties.server_pubkey.map(|pk| pk.to_string()),
+		":mailbox_pubkey": properties.mailbox_pubkey.map(|pk| pk.to_string()),
 	})?;
 
 	Ok(())
@@ -67,6 +68,21 @@ pub (crate) fn set_server_pubkey(
 	Ok(())
 }
 
+pub (crate) fn set_mailbox_pubkey(
+	conn: &Connection,
+	mailbox_pubkey: &PublicKey,
+) -> anyhow::Result<()> {
+	let query = "UPDATE bark_properties SET mailbox_pubkey = :mailbox_pubkey
+		WHERE id = 1 AND mailbox_pubkey IS NULL";
+	let mut statement = conn.prepare(query)?;
+
+	statement.execute(named_params! {
+		":mailbox_pubkey": mailbox_pubkey.to_string(),
+	})?;
+
+	Ok(())
+}
+
 pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<WalletProperties>> {
 	let query = "SELECT * FROM bark_properties";
 	let mut statement = conn.prepare(query)?;
@@ -76,17 +92,24 @@ pub (crate) fn fetch_properties(conn: &Connection) -> anyhow::Result<Option<Wall
 		let network: String = row.get("network")?;
 		let fingerprint: String = row.get("fingerprint")?;
 		let server_pubkey: Option<String> = row.get("server_pubkey")?;
+		let mailbox_pubkey: Option<String> = row.get("mailbox_pubkey")?;
 
 		let server_pubkey = server_pubkey
 			.map(|s| PublicKey::from_str(&s))
 			.transpose()
 			.context("invalid server pubkey")?;
 
+		let mailbox_pubkey = mailbox_pubkey
+			.map(|s| PublicKey::from_str(&s))
+			.transpose()
+			.context("invalid mailbox pubkey")?;
+
 		Ok(Some(
 			WalletProperties {
 				network: Network::from_str(&network).context("invalid network")?,
 				fingerprint: Fingerprint::from_str(&fingerprint).context("invalid fingerprint")?,
 				server_pubkey,
+				mailbox_pubkey,
 			}
 		))
 	} else {
